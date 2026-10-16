@@ -2,6 +2,7 @@ package com.ecom.payments.services;
 
 import com.ecom.payments.auth.AuthUserDto;
 import com.ecom.payments.clients.OrderClient;
+import com.ecom.payments.clients.NotificationPublisher;
 import com.ecom.payments.clients.OrderDto;
 import com.ecom.payments.exceptions.OrderAlreadyPaidException;
 import com.ecom.payments.exceptions.PaymentNotFoundException;
@@ -17,7 +18,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class PaymentService {
@@ -26,17 +29,20 @@ public class PaymentService {
     private final PaymentRepo paymentRepo;
     private final PaymentGateway paymentGateway;
     private final OrderClient orderClient;
+    private final NotificationPublisher notificationPublisher;
     private final String currency;
     private final long linkExpiryMinutes;
     private final String callbackUrl;
 
     public PaymentService(PaymentRepo paymentRepo, PaymentGateway paymentGateway, OrderClient orderClient,
+                          NotificationPublisher notificationPublisher,
                           @Value("${payment.currency:INR}") String currency,
                           @Value("${payment.link.expiry-minutes:30}") long linkExpiryMinutes,
                           @Value("${payment.callback-url}") String callbackUrl) {
         this.paymentRepo = paymentRepo;
         this.paymentGateway = paymentGateway;
         this.orderClient = orderClient;
+        this.notificationPublisher = notificationPublisher;
         this.currency = currency;
         this.linkExpiryMinutes = linkExpiryMinutes;
         this.callbackUrl = callbackUrl;
@@ -141,12 +147,31 @@ public class PaymentService {
                 payment.getOrderId(), String.valueOf(payment.getId()), payment.getAmount());
         if (!accepted) {
             updateStatus(payment, PaymentStatus.REFUND_PENDING);
-            // TODO: issue the refund through the gateway automatically, and notify the customer
+            // TODO: issue the refund through the gateway automatically
             log.error("REFUND REQUIRED: payment {} (gateway payment {}) for order {} was rejected by the Order Service",
                     payment.getId(), payment.getGatewayPaymentId(), payment.getOrderId());
+            notificationPublisher.publish("payment-" + payment.getId() + "-refund-pending", "PAYMENT_REFUND_PENDING",
+                    notificationData(payment));
             return;
         }
         cancelOtherOpenLinks(payment);
+        // Receipt (PRD 5.3). Stable id: webhook replays re-run this, and the Notification Service drops repeats
+        notificationPublisher.publish("payment-" + payment.getId() + "-received", "PAYMENT_RECEIVED",
+                notificationData(payment));
+    }
+
+    private static Map<String, Object> notificationData(Payment payment) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("paymentId", payment.getId());
+        data.put("orderId", payment.getOrderId());
+        data.put("userId", payment.getUserId());
+        data.put("amount", payment.getAmount());
+        data.put("currency", payment.getCurrency());
+        data.put("paidAt", payment.getPaidAt() == null ? System.currentTimeMillis() : payment.getPaidAt());
+        if (payment.getGatewayPaymentId() != null) {
+            data.put("gatewayPaymentId", payment.getGatewayPaymentId());
+        }
+        return data;
     }
 
     // Once an order is paid, close its other unpaid links so the customer cannot pay twice
