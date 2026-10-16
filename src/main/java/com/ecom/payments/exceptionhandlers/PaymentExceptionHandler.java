@@ -3,6 +3,7 @@ package com.ecom.payments.exceptionhandlers;
 import com.ecom.common.dtos.ErrorDto;
 import com.ecom.payments.auth.AuthServiceUnavailableException;
 import com.ecom.payments.auth.UnauthorizedException;
+import com.ecom.payments.clients.OrderServiceException;
 import com.ecom.payments.exceptions.InvalidWebhookSignatureException;
 import com.ecom.payments.exceptions.OrderAlreadyPaidException;
 import com.ecom.payments.exceptions.PaymentNotFoundException;
@@ -34,8 +35,8 @@ public class PaymentExceptionHandler {
         return new ResponseEntity<>(new ErrorDto(e.getMessage()), HttpStatus.BAD_GATEWAY);
     }
 
-    @ExceptionHandler(AuthServiceUnavailableException.class)
-    public ResponseEntity<ErrorDto> handleAuthServiceUnavailable(AuthServiceUnavailableException e) {
+    @ExceptionHandler({AuthServiceUnavailableException.class, OrderServiceException.class})
+    public ResponseEntity<ErrorDto> handleServiceUnavailable(RuntimeException e) {
         return new ResponseEntity<>(new ErrorDto(e.getMessage()), HttpStatus.SERVICE_UNAVAILABLE);
     }
 }

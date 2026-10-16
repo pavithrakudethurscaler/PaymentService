@@ -1,6 +1,8 @@
 package com.ecom.payments.services;
 
 import com.ecom.payments.auth.AuthUserDto;
+import com.ecom.payments.clients.OrderClient;
+import com.ecom.payments.clients.OrderDto;
 import com.ecom.payments.exceptions.OrderAlreadyPaidException;
 import com.ecom.payments.exceptions.PaymentNotFoundException;
 import com.ecom.payments.models.Payment;
@@ -23,42 +25,46 @@ public class PaymentService {
 
     private final PaymentRepo paymentRepo;
     private final PaymentGateway paymentGateway;
+    private final OrderClient orderClient;
     private final String currency;
     private final long linkExpiryMinutes;
     private final String callbackUrl;
 
-    public PaymentService(PaymentRepo paymentRepo, PaymentGateway paymentGateway,
+    public PaymentService(PaymentRepo paymentRepo, PaymentGateway paymentGateway, OrderClient orderClient,
                           @Value("${payment.currency:INR}") String currency,
                           @Value("${payment.link.expiry-minutes:30}") long linkExpiryMinutes,
                           @Value("${payment.callback-url}") String callbackUrl) {
         this.paymentRepo = paymentRepo;
         this.paymentGateway = paymentGateway;
+        this.orderClient = orderClient;
         this.currency = currency;
         this.linkExpiryMinutes = linkExpiryMinutes;
         this.callbackUrl = callbackUrl;
     }
 
     /*
-     1. Validate the request (TODO: fetch the order from the Order Service and verify the amount)
-     2. Save a payment record
-     3. Ask the gateway for a payment link
-     4. Return the link to the customer
+     1. Fetch the order from the Order Service as the customer (proves ownership, gives the real total)
+     2. Check the order is still waiting for payment
+     3. Save a payment record for the order total
+     4. Ask the gateway for a payment link
+     5. Return the link to the customer
      */
-    public Payment initiatePayment(AuthUserDto user, String orderId, Long amount, String phoneNumber)
-            throws OrderAlreadyPaidException {
+    public Payment initiatePayment(AuthUserDto user, String bearerToken, String orderId, String phoneNumber)
+            throws OrderAlreadyPaidException, PaymentNotFoundException {
         if (orderId == null || orderId.isBlank()) {
             throw new IllegalArgumentException("orderId is required");
         }
-        if (amount == null || amount <= 0) {
-            throw new IllegalArgumentException("amount must be a positive number of paise");
+        orderId = orderId.trim();
+        OrderDto order = orderClient.getOrderForUser(orderId, bearerToken);
+        if (!"CREATED".equals(order.getStatus()) || paymentRepo.existsByOrderIdAndStatus(orderId, PaymentStatus.PAID)) {
+            throw new OrderAlreadyPaidException("Order " + orderId + " is not awaiting payment (status "
+                    + order.getStatus() + ")");
         }
-        if (paymentRepo.existsByOrderIdAndStatus(orderId, PaymentStatus.PAID)) {
-            throw new OrderAlreadyPaidException("Order " + orderId + " is already paid");
-        }
+        long amount = order.getTotalAmount();
 
         long now = System.currentTimeMillis();
         Payment payment = new Payment();
-        payment.setOrderId(orderId.trim());
+        payment.setOrderId(orderId);
         payment.setUserId(user.getId());
         payment.setAmount(amount);
         payment.setCurrency(currency);
@@ -97,6 +103,10 @@ public class PaymentService {
     /**
      * Applies a status change reported by the gateway. Safe to call repeatedly with the same event,
      * because gateways retry webhooks. A PAID payment never changes again.
+     * <p>
+     * When a payment is PAID the Order Service is notified. If that call fails, the exception propagates so the
+     * webhook returns an error and the gateway retries; the retry re-sends the notification (the Order Service
+     * treats repeats as a no-op).
      */
     public void applyGatewayStatus(String gatewayLinkId, PaymentStatus newStatus, String gatewayPaymentId) {
         Payment payment = paymentRepo.findByGatewayLinkId(gatewayLinkId).orElse(null);
@@ -104,17 +114,19 @@ public class PaymentService {
             log.warn("Webhook for unknown payment link {}", gatewayLinkId);
             return;
         }
-        if (payment.getStatus() == PaymentStatus.PAID || payment.getStatus() == newStatus) {
-            return;
+
+        if (payment.getStatus() != PaymentStatus.PAID && payment.getStatus() != newStatus) {
+            payment.setStatus(newStatus);
+            if (newStatus == PaymentStatus.PAID) {
+                payment.setGatewayPaymentId(gatewayPaymentId);
+                payment.setPaidAt(System.currentTimeMillis());
+            }
+            paymentRepo.save(payment);
+            log.info("Payment {} for order {} is now {}", payment.getId(), payment.getOrderId(), newStatus);
         }
 
-        payment.setStatus(newStatus);
-        if (newStatus == PaymentStatus.PAID) {
-            payment.setGatewayPaymentId(gatewayPaymentId);
-            payment.setPaidAt(System.currentTimeMillis());
-            // TODO: publish a PaymentCompleted Kafka event for the Order Service (HLD 3.5)
+        if (payment.getStatus() == PaymentStatus.PAID && newStatus == PaymentStatus.PAID) {
+            orderClient.notifyPaymentCompleted(payment.getOrderId(), String.valueOf(payment.getId()), payment.getAmount());
         }
-        paymentRepo.save(payment);
-        log.info("Payment {} for order {} is now {}", payment.getId(), payment.getOrderId(), newStatus);
     }
 }

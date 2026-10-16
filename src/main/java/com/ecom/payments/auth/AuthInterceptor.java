@@ -13,6 +13,8 @@ import org.springframework.web.servlet.HandlerInterceptor;
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
     public static final String AUTH_USER_ATTRIBUTE = "authUser";
+    /** The raw bearer token, so it can be forwarded to services that act on the user's behalf */
+    public static final String AUTH_TOKEN_ATTRIBUTE = "authToken";
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final AuthService authService;
@@ -32,7 +34,9 @@ public class AuthInterceptor implements HandlerInterceptor {
             throw new UnauthorizedException("Missing Authorization: Bearer <token> header");
         }
 
-        AuthUserDto user = authService.validateToken(header.substring(BEARER_PREFIX.length()).trim());
+        String token = header.substring(BEARER_PREFIX.length()).trim();
+        AuthUserDto user = authService.validateToken(token);
+        request.setAttribute(AUTH_TOKEN_ATTRIBUTE, token);
         request.setAttribute(AUTH_USER_ATTRIBUTE, user);
         return true;
     }

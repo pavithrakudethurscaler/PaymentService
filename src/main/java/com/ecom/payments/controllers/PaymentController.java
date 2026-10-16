@@ -30,10 +30,11 @@ public class PaymentController {
     @PostMapping
     public ResponseEntity<PaymentResponseDto> initiatePayment(
             @RequestBody InitiatePaymentRequestDto initiatePaymentRequestDto,
-            @RequestAttribute(AuthInterceptor.AUTH_USER_ATTRIBUTE) AuthUserDto user) throws OrderAlreadyPaidException {
-        Payment payment = paymentService.initiatePayment(user,
+            @RequestAttribute(AuthInterceptor.AUTH_USER_ATTRIBUTE) AuthUserDto user,
+            @RequestAttribute(AuthInterceptor.AUTH_TOKEN_ATTRIBUTE) String bearerToken)
+            throws OrderAlreadyPaidException, PaymentNotFoundException {
+        Payment payment = paymentService.initiatePayment(user, bearerToken,
                 initiatePaymentRequestDto.getOrderId(),
-                initiatePaymentRequestDto.getAmount(),
                 initiatePaymentRequestDto.getPhoneNumber());
         return new ResponseEntity<>(PaymentResponseDto.from(payment), HttpStatus.CREATED);
     }
