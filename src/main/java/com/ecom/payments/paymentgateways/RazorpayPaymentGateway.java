@@ -59,4 +59,13 @@ public class RazorpayPaymentGateway implements PaymentGateway {
             throw new PaymentGatewayException("Razorpay could not create the payment link", e);
         }
     }
+
+    @Override
+    public void cancelPaymentLink(String linkId) {
+        try {
+            razorpayClient.paymentLink.cancel(linkId);
+        } catch (RazorpayException e) {
+            throw new PaymentGatewayException("Razorpay could not cancel payment link " + linkId, e);
+        }
+    }
 }

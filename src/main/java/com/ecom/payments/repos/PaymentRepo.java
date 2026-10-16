@@ -17,4 +17,6 @@ public interface PaymentRepo extends JpaRepository<Payment, Long> {
     boolean existsByOrderIdAndStatus(String orderId, PaymentStatus status);
 
     Optional<Payment> findByGatewayLinkId(String gatewayLinkId);
+
+    List<Payment> findByOrderIdAndStatus(String orderId, PaymentStatus status);
 }

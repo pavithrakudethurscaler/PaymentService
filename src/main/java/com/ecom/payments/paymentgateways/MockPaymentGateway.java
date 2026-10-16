@@ -22,4 +22,9 @@ public class MockPaymentGateway implements PaymentGateway {
         String linkId = "plink_mock_" + UUID.randomUUID().toString().replace("-", "");
         return new PaymentLinkResult(linkId, "https://mock-payments.local/pay/" + linkId);
     }
+
+    @Override
+    public void cancelPaymentLink(String linkId) {
+        // Nothing to cancel: mock links are not real
+    }
 }

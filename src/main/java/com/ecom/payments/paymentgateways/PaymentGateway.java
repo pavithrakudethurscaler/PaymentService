@@ -5,4 +5,7 @@ public interface PaymentGateway {
     String name();
 
     PaymentLinkResult createPaymentLink(PaymentLinkRequest request);
+
+    /** Cancels an unpaid link so the customer can no longer pay it */
+    void cancelPaymentLink(String linkId);
 }
